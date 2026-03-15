@@ -34,6 +34,7 @@ export class PaymentsService {
     let customerName = `Cliente ${dto.customerId}`;
     let customerEmail: string | undefined = dto.customerEmail;
     let customerPhone: string | undefined;
+    let routerName = '';
 
     try {
       // Usar el WebService (Scraping) que funciona para buscar al cliente
@@ -42,18 +43,18 @@ export class PaymentsService {
         dto.customerId
       );
 
-      if (result && result.customerName) {
-        customerName = result.customerName;
-      }
-      if (!customerEmail && result.customerEmail) {
-        customerEmail = result.customerEmail;
-      }
-      if (result.customerPhone) {
-        customerPhone = result.customerPhone;
+      if (result) {
+        if (result.customerName) customerName = result.customerName;
+        if (!customerEmail && result.customerEmail) customerEmail = result.customerEmail;
+        if (result.customerPhone) customerPhone = result.customerPhone;
+        routerName = result.router || '';
       }
     } catch (e) {
-      this.logger.warn(`No se pudo obtener el nombre del cliente ${dto.customerId} via WispHub Web Service`);
+      this.logger.warn(`No se pudo obtener datos del cliente ${dto.customerId} via WispHub Web Service: ${e.message}`);
     }
+
+    const configKey = routerName === 'CLOUD CORE SINCELEJO' ? 'DEFAULT' : 'MAG';
+    this.logger.log(`Router del cliente: "${routerName}" -> Usando configuración Wompi: ${configKey}`);
 
     const link = await this.wompiService.createPaymentLink({
       name:
@@ -77,8 +78,9 @@ export class PaymentsService {
       },
       metadata: {
         customerId: dto.customerId,
+        wompiConfig: configKey,
       },
-    });
+    }, configKey);
 
     this.logger.debug(`Wompi link response: ${JSON.stringify(link)}`);
 
@@ -94,8 +96,6 @@ export class PaymentsService {
   }
 
   async handleWebhook(payload: any, signature?: string, rawBody?: string) {
-    this.wompiService.assertSignature(signature, payload, rawBody);
-
     const eventType = payload?.event;
     const transaction = payload?.data?.transaction;
 
@@ -104,6 +104,14 @@ export class PaymentsService {
       return;
     }
 
+    // Extraer metadata para saber qué configuración se usó
+    const metadata =
+      transaction.payment_link?.data?.metadata ?? transaction.metadata ?? {};
+    const configKey = metadata.wompiConfig || 'DEFAULT';
+
+    // Validar firma con la configuración correspondiente
+    this.wompiService.assertSignature(signature, payload, rawBody, configKey as 'DEFAULT' | 'MAG');
+
     if (transaction.status !== 'APPROVED') {
       this.logger.log(
         `Ignorando transacción con estado: ${transaction.status}`,
@@ -111,9 +119,7 @@ export class PaymentsService {
       return;
     }
 
-    // Extraer el customerId del metadata (soporta ambas variantes)
-    const metadata =
-      transaction.payment_link?.data?.metadata ?? transaction.metadata ?? {};
+    // El metadata ya fue extraído arriba para la firma
     const customerId = metadata.customerId || metadata.customer_id;
 
     if (!customerId) {
@@ -143,7 +149,6 @@ export class PaymentsService {
     }
 
     // Seleccionar la factura más reciente (primera en la lista, ordenada por fecha desc)
-    // Si Wompi envía el monto exacto de una factura, también se puede cruzar por monto.
     const targetInvoice = pendingInvoices[0];
     this.logger.log(
       `Cliente ${customerId}: ${pendingInvoices.length} factura(s) pendiente(s). ` +
@@ -172,8 +177,6 @@ export class PaymentsService {
         `Error guardando el pago en la base de datos. Transaction ID: ${transaction.id}`,
         dbError.stack,
       );
-      // Opcional: Decidir si se debe abortar o continuar intentando reportar a wisphub incluso si falla la DB.
-      // Por ahora, solo logueamos para no interrumpir la reactivación del servicio.
     }
 
     // ─── Registrar el pago en WispHub (vía Scraping Web) ──────────────────────

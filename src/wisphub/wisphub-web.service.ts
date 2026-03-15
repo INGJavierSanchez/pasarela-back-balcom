@@ -29,6 +29,7 @@ export interface NormalizedInvoice {
   paidDate?: string; // ISO 8601, solo si pagada
   status: 'pending' | 'paid';
   reference?: string;
+  router?: string;
   rawEstado: string; // Estado original de WispHub
 }
 
@@ -195,6 +196,7 @@ export class WisphubWebService {
     customerEmail?: string;
     customerPhone?: string;
     plan: string;
+    router: string;
     pending: NormalizedInvoice[];
     paid: NormalizedInvoice[];
   }> {
@@ -240,6 +242,9 @@ export class WisphubWebService {
     const plan: string =
       primeraFactura['plan_internet'] ?? primeraFactura.plan ?? '';
 
+    const routerName: string =
+      primeraFactura['router'] ?? '';
+
     // 3. Si la factura no trae el nombre, usamos la API REST oficial (más confiable)
     if (!customerName) {
       try {
@@ -284,6 +289,7 @@ export class WisphubWebService {
         paidDate: f.fecha_pago ? parseWisphubDate(f.fecha_pago) : undefined,
         status: normalizeEstado(f.estado ?? ''),
         reference: f.num_contrato ?? undefined,
+        router: f.router ?? undefined,
         rawEstado: f.estado ?? '',
       };
 
@@ -297,7 +303,7 @@ export class WisphubWebService {
     // Ordenar pagadas por fecha de emisión descendente
     paid.sort((a, b) => b.issueDate.localeCompare(a.issueDate));
 
-    return { customerId: cedula, customerName, customerEmail, customerPhone, plan, pending, paid };
+    return { customerId: cedula, customerName, customerEmail, customerPhone, plan, router: routerName, pending, paid };
   }
 
   /**

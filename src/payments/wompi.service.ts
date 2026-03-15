@@ -40,15 +40,18 @@ export class WompiService {
     private readonly configService: ConfigService,
   ) { }
 
-  private get authHeaders() {
+  private getAuthHeaders(configKey?: 'DEFAULT' | 'MAG') {
+    const keySuffix = configKey === 'MAG' ? '_MAG' : '';
+    const privateKey = this.configService.get<string>(`WOMPI_PRIVATE_KEY${keySuffix}`);
     return {
-      Authorization: `Bearer ${this.configService.get<string>('WOMPI_PRIVATE_KEY')}`,
+      Authorization: `Bearer ${privateKey}`,
       'Content-Type': 'application/json',
     };
   }
 
   async createPaymentLink(
     input: CreateWompiPaymentLinkInput,
+    configKey: 'DEFAULT' | 'MAG' = 'DEFAULT',
   ): Promise<WompiPaymentLinkResponse> {
     try {
       const { data } = await firstValueFrom(
@@ -74,7 +77,7 @@ export class WompiService {
               : undefined,
             metadata: input.metadata,
           },
-          { headers: this.authHeaders },
+          { headers: this.getAuthHeaders(configKey) },
         ),
       );
 
@@ -88,13 +91,15 @@ export class WompiService {
     signatureHeader: string | undefined,
     payload: unknown,
     rawBody?: string,
+    configKey: 'DEFAULT' | 'MAG' = 'DEFAULT',
   ) {
     if (!signatureHeader) {
       throw new UnauthorizedException('Missing Wompi signature header');
     }
 
     const parsed = this.parseSignatureHeader(signatureHeader);
-    const secret = this.configService.get<string>('WOMPI_EVENTS_SECRET');
+    const keySuffix = configKey === 'MAG' ? '_MAG' : '';
+    const secret = this.configService.get<string>(`WOMPI_EVENTS_SECRET${keySuffix}`);
     const payloadString = rawBody ?? JSON.stringify(payload);
     const computed = this.computeHmac(
       `${parsed.timestamp}.${payloadString}`,
