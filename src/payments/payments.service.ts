@@ -68,10 +68,15 @@ export class PaymentsService {
       },
     });
 
+    this.logger.debug(`Wompi link response: ${JSON.stringify(link)}`);
+
+    // Wompi puede devolver la URL directamente o solo el ID
+    const paymentUrl = link.url ?? `https://checkout.wompi.co/l/${link.id}`;
+
     return {
       customerName,
       paymentLinkId: link.id,
-      url: link.url,
+      url: paymentUrl,
       expiresAt: link.expires_at,
     };
   }
