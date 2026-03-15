@@ -192,6 +192,8 @@ export class WisphubWebService {
   ): Promise<{
     customerId: string;
     customerName: string;
+    customerEmail?: string;
+    customerPhone?: string;
     plan: string;
     pending: NormalizedInvoice[];
     paid: NormalizedInvoice[];
@@ -256,6 +258,17 @@ export class WisphubWebService {
     // 4. Fallback final
     if (!customerName) customerName = `Cliente ${cedula}`;
 
+    // 5. Extraer email y teléfono del cliente desde la factura
+    const customerEmail: string | undefined =
+      primeraFactura['cliente__email'] ||
+      primeraFactura['email'] ||
+      undefined;
+
+    const customerPhone: string | undefined =
+      primeraFactura['cliente__perfilusuario__telefono'] ||
+      primeraFactura['telefono'] ||
+      undefined;
+
     const pending: NormalizedInvoice[] = [];
     const paid: NormalizedInvoice[] = [];
 
@@ -284,7 +297,7 @@ export class WisphubWebService {
     // Ordenar pagadas por fecha de emisión descendente
     paid.sort((a, b) => b.issueDate.localeCompare(a.issueDate));
 
-    return { customerId: cedula, customerName, plan, pending, paid };
+    return { customerId: cedula, customerName, customerEmail, customerPhone, plan, pending, paid };
   }
 
   /**

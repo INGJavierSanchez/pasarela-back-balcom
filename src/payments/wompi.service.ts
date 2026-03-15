@@ -13,6 +13,13 @@ interface CreateWompiPaymentLinkInput {
   redirectUrl?: string;
   singleUse?: boolean;
   customerEmail?: string;
+  customerData?: {
+    fullName?: string;
+    phoneNumber?: string;
+    phoneNumberPrefix?: string;
+    legalId?: string;
+    legalIdType?: string;
+  };
   metadata?: Record<string, unknown>;
 }
 
@@ -53,9 +60,18 @@ export class WompiService {
             amount_in_cents: input.amountInCents,
             currency: input.currency,
             single_use: input.singleUse ?? true,
-            collect_shipping: false, // Requerido por la API de Wompi
+            collect_shipping: false,
             redirect_url: input.redirectUrl,
             customer_email: input.customerEmail,
+            customer_data: input.customerData
+              ? {
+                full_name: input.customerData.fullName,
+                phone_number: input.customerData.phoneNumber,
+                phone_number_prefix: input.customerData.phoneNumberPrefix ?? '+57',
+                legal_id: input.customerData.legalId,
+                legal_id_type: input.customerData.legalIdType,
+              }
+              : undefined,
             metadata: input.metadata,
           },
           { headers: this.authHeaders },

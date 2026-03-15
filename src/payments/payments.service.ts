@@ -32,7 +32,8 @@ export class PaymentsService {
 
   async createPaymentLink(dto: CreatePaymentLinkDto) {
     let customerName = `Cliente ${dto.customerId}`;
-    let customerEmail;
+    let customerEmail: string | undefined = dto.customerEmail;
+    let customerPhone: string | undefined;
 
     try {
       // Usar el WebService (Scraping) que funciona para buscar al cliente
@@ -43,6 +44,12 @@ export class PaymentsService {
 
       if (result && result.customerName) {
         customerName = result.customerName;
+      }
+      if (!customerEmail && result.customerEmail) {
+        customerEmail = result.customerEmail;
+      }
+      if (result.customerPhone) {
+        customerPhone = result.customerPhone;
       }
     } catch (e) {
       this.logger.warn(`No se pudo obtener el nombre del cliente ${dto.customerId} via WispHub Web Service`);
@@ -61,8 +68,13 @@ export class PaymentsService {
       redirectUrl:
         dto.redirectUrl ??
         this.configService.get<string>('PAYMENTS_REDIRECT_URL'),
-      customerEmail:
-        dto.customerEmail ?? customerEmail,
+      customerEmail,
+      customerData: {
+        fullName: customerName,
+        phoneNumber: customerPhone,
+        legalId: dto.customerId,
+        legalIdType: 'CC',
+      },
       metadata: {
         customerId: dto.customerId,
       },
