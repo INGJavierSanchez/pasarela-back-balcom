@@ -2,7 +2,6 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { json } from 'express';
 import * as express from 'express';
 import { join } from 'path';
 import { AppModule } from './app.module';
@@ -16,7 +15,17 @@ async function bootstrap() {
     '/swagger-theme-toggle.js',
     express.static(join(process.cwd(), 'public', 'swagger-theme-toggle.js')),
   );
-  app.enableCors();
+  app.enableCors({
+    origin: [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'https://pago.balcom.cloud',
+      'https://app.balcom.cloud',
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
   app.enableShutdownHooks();
   app.useGlobalPipes(
     new ValidationPipe({
