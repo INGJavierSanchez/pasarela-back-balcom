@@ -43,20 +43,25 @@ export class PaymentsService {
         dto.customerId
       );
 
+      this.logger.log(`Resultados de Wisphub para ${dto.customerId}: Name="${result?.customerName}", Email="${result?.customerEmail}", Phone="${result?.customerPhone}", Router="${result?.router}"`);
+
       if (result) {
         if (result.customerName) customerName = result.customerName;
-        if (!customerEmail && result.customerEmail) customerEmail = result.customerEmail;
+        if (result.customerEmail) customerEmail = result.customerEmail;
         if (result.customerPhone) customerPhone = result.customerPhone;
-        routerName = result.router || '';
+        routerName = (result.router || '').trim().toUpperCase();
       }
     } catch (e) {
       this.logger.warn(`No se pudo obtener datos del cliente ${dto.customerId} via WispHub Web Service: ${e.message}`);
     }
 
-    const configKey = routerName === 'CLOUD CORE SINCELEJO' ? 'DEFAULT' : 'MAG';
-    this.logger.log(`Router del cliente: "${routerName}" -> Usando configuración Wompi: ${configKey}`);
+    const configKey = routerName.includes('SINCELEJO') ? 'DEFAULT' : 'MAG';
+    this.logger.log(`Router detectado: "${routerName}" -> Usando configuración Wompi: ${configKey}`);
 
-    const link = await this.wompiService.createPaymentLink({
+    // Limpiar teléfono para Wompi (solo dígitos, 10 últimos)
+    const cleanPhone = customerPhone ? customerPhone.replace(/\D/g, '').slice(-10) : undefined;
+
+    const wompiPayload = {
       name:
         dto.description ??
         `Pago cliente ${customerName}`,
@@ -72,7 +77,7 @@ export class PaymentsService {
       customerEmail,
       customerData: {
         fullName: customerName,
-        phoneNumber: customerPhone,
+        phoneNumber: cleanPhone,
         legalId: dto.customerId,
         legalIdType: 'CC',
       },
@@ -80,7 +85,11 @@ export class PaymentsService {
         customerId: dto.customerId,
         wompiConfig: configKey,
       },
-    }, configKey);
+    };
+
+    this.logger.log(`Enviando a Wompi (${configKey}) con payload: ${JSON.stringify(wompiPayload)}`);
+
+    const link = await this.wompiService.createPaymentLink(wompiPayload, configKey as 'DEFAULT' | 'MAG');
 
     this.logger.debug(`Wompi link response: ${JSON.stringify(link)}`);
 

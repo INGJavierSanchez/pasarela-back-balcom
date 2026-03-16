@@ -267,11 +267,15 @@ export class WisphubWebService {
     const customerEmail: string | undefined =
       primeraFactura['cliente__email'] ||
       primeraFactura['email'] ||
+      primeraFactura['cliente_email'] ||
+      primeraFactura['user__email'] ||
       undefined;
 
     const customerPhone: string | undefined =
       primeraFactura['cliente__perfilusuario__telefono'] ||
       primeraFactura['telefono'] ||
+      primeraFactura['cliente_telefono'] ||
+      primeraFactura['perfilusuario__telefono'] ||
       undefined;
 
     const pending: NormalizedInvoice[] = [];
