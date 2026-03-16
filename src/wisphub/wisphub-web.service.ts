@@ -242,7 +242,7 @@ export class WisphubWebService {
     const plan: string =
       primeraFactura['plan_internet'] ?? primeraFactura.plan ?? '';
 
-    const routerName: string =
+    let routerName: string =
       primeraFactura['router'] ?? '';
 
     // 3. Si la factura no trae el nombre, usamos la API REST oficial (más confiable)
@@ -253,8 +253,12 @@ export class WisphubWebService {
         this.logger.debug(
           `API REST clientes: ${JSON.stringify(clientes).slice(0, 300)}`,
         );
-        const c = Array.isArray(clientes) ? clientes[0] : null;
-        customerName = c?.nombre ?? c?.name ?? '';
+        const c = Array.isArray(clientes) ? clientes[0] : (clientes as any);
+        customerName = c?.nombre ?? c?.name ?? customerName;
+        // Intentar obtener el router del cliente si la factura no lo trajo
+        if (!routerName && (c?.router_nombre || c?.router)) {
+          routerName = c?.router_nombre || c?.router || '';
+        }
       } catch {
         // Falla silenciosamente
       }
@@ -264,18 +268,14 @@ export class WisphubWebService {
     if (!customerName) customerName = `Cliente ${cedula}`;
 
     // 5. Extraer email y teléfono del cliente desde la factura
+    const cleanStr = (s: any) => String(s || '').split(',')[0].trim();
+
     const customerEmail: string | undefined =
-      primeraFactura['cliente__email'] ||
-      primeraFactura['email'] ||
-      primeraFactura['cliente_email'] ||
-      primeraFactura['user__email'] ||
+      cleanStr(primeraFactura['cliente__email'] || primeraFactura['email'] || primeraFactura['cliente_email'] || primeraFactura['user__email']) ||
       undefined;
 
     const customerPhone: string | undefined =
-      primeraFactura['cliente__perfilusuario__telefono'] ||
-      primeraFactura['telefono'] ||
-      primeraFactura['cliente_telefono'] ||
-      primeraFactura['perfilusuario__telefono'] ||
+      cleanStr(primeraFactura['cliente__perfilusuario__telefono'] || primeraFactura['telefono'] || primeraFactura['cliente_telefono'] || primeraFactura['perfilusuario__telefono']) ||
       undefined;
 
     const pending: NormalizedInvoice[] = [];
