@@ -243,10 +243,29 @@ export class WisphubWebService {
       primeraFactura['plan_internet'] ?? primeraFactura.plan ?? '';
 
     let routerName: string =
-      primeraFactura['router'] ?? '';
+      primeraFactura['router'] || primeraFactura['zona'] || primeraFactura['cliente__perfilusuario__localidad'] || '';
+    
+    this.logger.debug(`Valores potenciales para Router: router="${primeraFactura['router']}", zona="${primeraFactura['zona']}", localidad="${primeraFactura['cliente__perfilusuario__localidad']}"`);
+    
+    // Log completo de la factura para ver dónde está el dato (solo las primeras 20 keys para no saturar)
+    const smallInvoice: any = {};
+    Object.keys(primeraFactura).slice(0, 30).forEach(k => smallInvoice[k] = primeraFactura[k]);
+    this.logger.debug(`Datos parciales de factura: ${JSON.stringify(smallInvoice)}`);
+
+    // Si aún no tenemos routerName, busquemos "SINCELEJO" en cualquier campo de la factura
+    if (!routerName) {
+      for (const key in primeraFactura) {
+        const val = String(primeraFactura[key]);
+        if (val.toUpperCase().includes('SINCELEJO')) {
+          this.logger.log(`Detectado "SINCELEJO" en el campo "${key}": ${val}`);
+          routerName = 'CLOUD CORE SINCELEJO';
+          break;
+        }
+      }
+    }
 
     // 3. Si la factura no trae el nombre, usamos la API REST oficial (más confiable)
-    if (!customerName) {
+    if (!customerName || !routerName) {
       try {
         const clientes =
           await this.wisphubService.searchCustomersByDocument(cedula);
@@ -254,13 +273,16 @@ export class WisphubWebService {
           `API REST clientes: ${JSON.stringify(clientes).slice(0, 300)}`,
         );
         const c = Array.isArray(clientes) ? clientes[0] : (clientes as any);
-        customerName = c?.nombre ?? c?.name ?? customerName;
-        // Intentar obtener el router del cliente si la factura no lo trajo
-        if (!routerName && (c?.router_nombre || c?.router)) {
-          routerName = c?.router_nombre || c?.router || '';
+        if (c) {
+          customerName = c.nombre ?? c.name ?? customerName;
+          // Intentar obtener el router del cliente si la factura no lo trajo
+          if (!routerName && (c.router_nombre || c.router)) {
+            routerName = c.router_nombre || c.router || '';
+            this.logger.log(`Router obtenido de API REST: "${routerName}"`);
+          }
         }
-      } catch {
-        // Falla silenciosamente
+      } catch (e) {
+        this.logger.error(`Error en fallback API REST: ${e.message}`);
       }
     }
 
@@ -307,7 +329,16 @@ export class WisphubWebService {
     // Ordenar pagadas por fecha de emisión descendente
     paid.sort((a, b) => b.issueDate.localeCompare(a.issueDate));
 
-    return { customerId: cedula, customerName, customerEmail, customerPhone, plan, router: routerName, pending, paid };
+    return {
+      customerId: cedula,
+      customerName,
+      customerEmail,
+      customerPhone,
+      plan,
+      router: routerName,
+      pending,
+      paid,
+    };
   }
 
   /**
