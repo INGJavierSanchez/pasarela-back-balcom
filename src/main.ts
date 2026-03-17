@@ -16,16 +16,24 @@ async function bootstrap() {
     express.static(join(process.cwd(), 'public', 'swagger-theme-toggle.js')),
   );
   app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      'http://localhost:5173',
-      /\.balcom\.cloud$/,
-      'https://pago.balcom.cloud',
-      'https://app.balcom.cloud',
-    ],
+    origin: (origin, callback) => {
+      if (!origin || 
+          origin.match(/localhost:/) || 
+          origin.match(/\.balcom\.cloud$/)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+    allowedHeaders: [
+      'Content-Type', 
+      'Authorization', 
+      'Accept', 
+      'X-Requested-With',
+      'X-Event-Signature'
+    ],
   });
   app.enableShutdownHooks();
   app.useGlobalPipes(
