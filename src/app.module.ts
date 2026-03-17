@@ -5,6 +5,8 @@ import * as Joi from 'joi';
 import { PaymentsModule } from './payments/payments.module';
 import { WisphubModule } from './wisphub/wisphub.module';
 import { HealthModule } from './health/health.module';
+import { UsersModule } from './users/users.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -52,6 +54,7 @@ import { HealthModule } from './health/health.module';
         DATABASE_USER: Joi.string().required(),
         DATABASE_PASSWORD: Joi.string().required(),
         DATABASE_NAME: Joi.string().required(),
+        JWT_SECRET: Joi.string().required(),
       }),
     }),
     TypeOrmModule.forRootAsync({
@@ -71,6 +74,8 @@ import { HealthModule } from './health/health.module';
     HealthModule,
     WisphubModule,
     PaymentsModule,
+    UsersModule,
+    AuthModule,
   ],
   controllers: [],
   providers: [],

@@ -9,6 +9,7 @@ import { RegisterPaymentDto } from '../wisphub/dto/register-payment.dto';
 import { PaymentRecord } from './entities/payment-record.entity';
 import { WisphubWebService } from '../wisphub/wisphub-web.service';
 import { WisphubLoginDto } from '../wisphub/dto/wisphub-login.dto';
+import { GetPaymentsReportDto } from './dto/get-payments-report.dto';
 
 @Injectable()
 export class PaymentsService {
@@ -205,5 +206,48 @@ export class PaymentsService {
       `Pago registrado exitosamente: cliente=${customerId}, factura=${targetInvoice.id}, ` +
       `monto=${transaction.amount_in_cents / 100} COP, ref=${transaction.id}`,
     );
+  }
+
+  async getReport(filters: GetPaymentsReportDto) {
+    const { startDate, endDate, customerId, status, page, limit } = filters;
+    const query = this.paymentRecordRepository.createQueryBuilder('payment');
+
+    if (startDate) {
+      // Forzar que sea la medianoche de Bogotá (-05:00) y convertir a objeto Date (UTC)
+      const start = new Date(`${startDate}T00:00:00-05:00`);
+      query.andWhere('payment.createdAt >= :start', { start });
+    }
+
+    if (endDate) {
+      // Forzar que sea el final del día en Bogotá (-05:00) y convertir a objeto Date (UTC)
+      const end = new Date(`${endDate}T23:59:59.999-05:00`);
+      query.andWhere('payment.createdAt <= :end', { end });
+    }
+
+    if (customerId) {
+      query.andWhere('payment.customerId = :customerId', { customerId });
+    }
+
+    if (status) {
+      query.andWhere('payment.status = :status', { status });
+    }
+
+    query.orderBy('payment.createdAt', 'DESC');
+
+    const total = await query.getCount();
+    const data = await query
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 }
