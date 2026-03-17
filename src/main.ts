@@ -17,9 +17,10 @@ async function bootstrap() {
   );
   app.enableCors({
     origin: (origin, callback) => {
+      // Permitir localhost para desarrollo y cualquier subdominio de balcom.cloud para producción
       if (!origin || 
           origin.match(/localhost:/) || 
-          origin.match(/\.balcom\.cloud$/)) {
+          origin.match(/balcom\.cloud$/)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
