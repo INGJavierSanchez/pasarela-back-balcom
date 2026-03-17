@@ -19,12 +19,13 @@ async function bootstrap() {
     origin: [
       'http://localhost:3000',
       'http://localhost:5173',
+      /\.balcom\.cloud$/,
       'https://pago.balcom.cloud',
       'https://app.balcom.cloud',
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
   });
   app.enableShutdownHooks();
   app.useGlobalPipes(
