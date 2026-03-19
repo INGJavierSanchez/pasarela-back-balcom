@@ -2,7 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
-import { createHmac } from 'crypto';
+import { createHmac, createHash } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 
 interface CreateWompiPaymentLinkInput {
@@ -89,25 +89,66 @@ export class WompiService {
 
   assertSignature(
     signatureHeader: string | undefined,
-    payload: unknown,
+    payload: any,
     rawBody?: string,
     configKey: 'DEFAULT' | 'MAG' = 'DEFAULT',
   ) {
-    if (!signatureHeader) {
-      throw new UnauthorizedException('Missing Wompi signature header');
-    }
-
-    const parsed = this.parseSignatureHeader(signatureHeader);
     const keySuffix = configKey === 'MAG' ? '_MAG' : '';
     const secret = this.configService.get<string>(`WOMPI_EVENTS_SECRET${keySuffix}`);
+
+    if (!secret) {
+      throw new UnauthorizedException('Missing events secret in config');
+    }
+
+    // ─── Validación Nueva: Checksum en Payload (SHA256) ─────────────────────
+    if (
+      payload?.signature &&
+      payload.signature.checksum &&
+      Array.isArray(payload.signature.properties)
+    ) {
+      this.logger.debug('Validando firma Wompi con el nuevo método Checksum (SHA256)');
+      let concatenatedValues = '';
+
+      for (const propPath of payload.signature.properties) {
+        // propPath ej: "transaction.id"
+        const parts = propPath.split('.');
+        let val: any = payload.data;
+        for (const part of parts) {
+          if (val === undefined || val === null) break;
+          val = val[part];
+        }
+        concatenatedValues += (val ?? '');
+      }
+
+      const timestamp = payload.timestamp?.toString() || '';
+      const stringToHash = concatenatedValues + timestamp + secret;
+      const computed = createHash('sha256').update(stringToHash).digest('hex');
+
+      if (computed !== payload.signature.checksum) {
+        this.logger.error(`Checksum inválido. Recibido: ${payload.signature.checksum}, Calculado: ${computed}`);
+        throw new UnauthorizedException('Invalid Wompi payload checksum');
+      }
+
+      return; // Validación exitosa
+    }
+
+    // ─── Validación Legacy: cabecera x-event-signature (HMAC SHA256) ────────
+    if (!signatureHeader) {
+      this.logger.error('No se recibió cabecera x-event-signature ni nuevo checksum de seguridad');
+      throw new UnauthorizedException('Missing Wompi signature (Header and Payload)');
+    }
+
+    this.logger.debug('Validando firma Wompi con método Legacy (HMAC Header)');
+    const parsed = this.parseSignatureHeader(signatureHeader);
     const payloadString = rawBody ?? JSON.stringify(payload);
-    const computed = this.computeHmac(
+    const computedLegacy = this.computeHmac(
       `${parsed.timestamp}.${payloadString}`,
       secret,
     );
 
-    if (computed !== parsed.signature) {
-      throw new UnauthorizedException('Invalid Wompi signature');
+    if (computedLegacy !== parsed.signature) {
+      this.logger.error(`Firma Legacy inválida`);
+      throw new UnauthorizedException('Invalid Wompi legacy signature');
     }
   }
 
