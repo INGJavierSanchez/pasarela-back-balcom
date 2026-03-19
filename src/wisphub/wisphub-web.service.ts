@@ -496,7 +496,8 @@ export class WisphubWebService {
     action: number = 1 // 1 = Registrar y reactivar servicio
   ): Promise<string> {
     const session = await this.ensureSession(credentials);
-    const url = `${this.baseUrl}/facturas/${invoiceId}/registrar-pago/`;
+    // El puerto WispHub usa esta URL según su HTML: /registrar/pago/{slug}/{id}/
+    const url = `${this.baseUrl}/registrar/pago/${session.companySlug}/${invoiceId}/`;
 
     // Convertir centavos (Wompi) → pesos (WispHub)
     const totalCobrado = amount / 100;
