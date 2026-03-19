@@ -514,15 +514,37 @@ export class WisphubWebService {
     );
 
     // Los campos requeridos por el form web de django de WispHub
+    // GET a la forma para sacar CSRF Fresco y el ID exacto de la Forma de Pago ("Wompi")
+    let formCsrf = session.csrfToken;
+    let formaPagoId = '1'; // Default
+    try {
+      this.logger.debug(`Cargando vista del formulario de pago WispHub: ${url}`);
+      const pageResp = await firstValueFrom(
+        this.http.get(url, { headers: { Cookie: session.sessionCookies } })
+      );
+      const $ = cheerio.load(pageResp.data as string);
+      const newCsrf = $('input[name="csrfmiddlewaretoken"]').val() as string;
+      if (newCsrf) formCsrf = newCsrf;
+      
+      $('select[name="forma_pago"] option').each((_, el) => {
+        const text = $(el).text().trim().toLowerCase();
+        if (text.includes('wompi')) {
+          formaPagoId = $(el).attr('value') as string || formaPagoId;
+        }
+      });
+      this.logger.debug(`Forma de pago detectada para Wompi: ${formaPagoId}`);
+    } catch (e) {
+      this.logger.warn(`Error leyendo el formulario de WispHub, usando valores por defecto: ${e.message}`);
+    }
+
     const formData = new URLSearchParams({
-      csrfmiddlewaretoken: session.csrfToken,
-      referencia: reference,
+      csrfmiddlewaretoken: formCsrf,
+      referencia: String(invoiceId), // Solicitado por el usuario: poner el id_factura
       fecha_pago: fechaPago,
       total_cobrado: String(totalCobrado),
-      forma_pago: '1', // 1 suele ser Efectivo o Transferencia base; ajustable si se tiene el ID específico de Wompi
-      accion: String(action),
-      // Campos opcionales vacíos que suele enviar el UI:
-      comentario: 'Pago generado vía Wompi Automático',
+      forma_pago: formaPagoId,            // ID encontrado dinámicamente
+      accion: String(action),             // 0 o 1
+      comentario: `Pago generado vía Wompi Automático. Ref Wompi: ${reference}`, // Guardamos la url/referencia aquí
       cajero: '',
     });
 
