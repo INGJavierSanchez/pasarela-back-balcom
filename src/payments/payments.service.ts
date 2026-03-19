@@ -193,31 +193,37 @@ export class PaymentsService {
 
     // ─── Guardar en Base de Datos (PostgreSQL) ──────────────────────────────
     try {
-      const paymentRecord = this.paymentRecordRepository.create({
-        transactionId: transaction.id,
-        customerId: String(customerId),
-        invoiceId: targetInvoice ? Number(targetInvoice.id) : 0,
-        amountInCents: transaction.amount_in_cents,
-        currency: transaction.currency,
-        status: transaction.status,
-        paymentMethod: transaction.payment_method?.type,
-        metadata: {
-          ...metadata,
-          wisphubSyncStatus: targetInvoice ? 'PENDING' : 'NO_INVOICE_FOUND',
-          wisphubSyncError:
-            fetchError ||
-            (!targetInvoice ? 'No se encontraron facturas pendientes' : null),
-        },
+      let paymentRecord = await this.paymentRecordRepository.findOne({
+        where: { transactionId: transaction.id }
       });
 
-      await this.paymentRecordRepository.save(paymentRecord);
-      this.logger.log(
-        `Pago guardado en la base de datos local con ID: ${paymentRecord.id}`,
-      );
+      if (!paymentRecord) {
+        paymentRecord = this.paymentRecordRepository.create({
+          transactionId: transaction.id,
+          customerId: String(customerId),
+          invoiceId: targetInvoice ? Number(targetInvoice.id) : 0,
+          amountInCents: transaction.amount_in_cents,
+          currency: transaction.currency,
+          status: transaction.status,
+          paymentMethod: transaction.payment_method?.type,
+          metadata: {
+            ...metadata,
+            wisphubSyncStatus: targetInvoice ? 'PENDING' : 'NO_INVOICE_FOUND',
+            wisphubSyncError:
+              fetchError ||
+              (!targetInvoice ? 'No se encontraron facturas pendientes' : null),
+          },
+        });
+        await this.paymentRecordRepository.save(paymentRecord);
+        this.logger.log(
+          `Pago guardado en la base de datos local con ID: ${paymentRecord.id}`,
+        );
+      } else {
+        this.logger.log(`El pago Wompi ${transaction.id} ya existe en la Base de Datos. Procediendo a reintentar WispHub...`);
+      }
     } catch (dbError) {
       this.logger.error(
-        `Error guardando el pago en la base de datos. Transaction ID: ${transaction.id}`,
-        dbError.stack,
+        `Error guardando el pago en la base de datos. Transaction ID: ${transaction.id} - ${dbError.message}`,
       );
     }
 
