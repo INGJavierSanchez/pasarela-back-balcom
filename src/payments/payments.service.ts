@@ -130,11 +130,29 @@ export class PaymentsService {
     }
 
     // El metadata ya fue extraído arriba para la firma
-    const customerId = 
+    let customerId = 
       metadata.customerId || 
       metadata.customer_id || 
       transaction.customer_data?.legal_id || 
       transaction.customer_data?.legalId;
+
+    if (!customerId && transaction.payment_link_id) {
+      this.logger.debug(`Buscando customerId en el Payment Link original: ${transaction.payment_link_id}`);
+      try {
+        const linkData = await this.wompiService.getPaymentLink(
+          transaction.payment_link_id,
+          configKey as 'DEFAULT' | 'MAG'
+        );
+        customerId = 
+          linkData?.metadata?.customerId || 
+          linkData?.metadata?.customer_id || 
+          linkData?.customer_data?.legal_id ||
+          linkData?.customer_data?.legalId ||
+          transaction.customer_email; // Último recurso
+      } catch (e) {
+        this.logger.warn(`Error buscando payment link original: ${e.message}`);
+      }
+    }
 
     if (!customerId) {
       this.logger.warn(

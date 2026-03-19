@@ -87,6 +87,20 @@ export class WompiService {
     }
   }
 
+  async getPaymentLink(id: string, configKey: 'DEFAULT' | 'MAG' = 'DEFAULT'): Promise<any> {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get(`/payment_links/${id}`, {
+          headers: this.getAuthHeaders(configKey),
+        }),
+      );
+      return data.data;
+    } catch (error) {
+      this.logger.warn(`Failed to fetch payment link ${id}: ${error.message}`);
+      return null;
+    }
+  }
+
   assertSignature(
     signatureHeader: string | undefined,
     payload: any,
