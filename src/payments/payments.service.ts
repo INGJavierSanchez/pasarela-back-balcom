@@ -140,6 +140,7 @@ export class PaymentsService {
     // ─── Buscar la factura pendiente del cliente ────────────────────────────────
     // Usamos el Web Service en lugar de la API que da 403
     let pendingInvoices: any[] = [];
+    let fetchError: string | null = null;
     try {
       const result = await this.wisphubWebService.getClienteFacturas(
         this.wisphubCredentials,
@@ -147,35 +148,42 @@ export class PaymentsService {
       );
       pendingInvoices = result.pending;
     } catch (e) {
+      fetchError = e.message;
       this.logger.warn(`Error buscando facturas vía WebService: ${e.message}`);
     }
 
-    if (!pendingInvoices || pendingInvoices.length === 0) {
+    const targetInvoice =
+      pendingInvoices && pendingInvoices.length > 0 ? pendingInvoices[0] : null;
+
+    if (!targetInvoice) {
       this.logger.warn(
         `No se encontraron facturas pendientes para el cliente ${customerId}. ` +
-        `El pago de Wompi (ref: ${transaction.id}) NO fue registrado en WispHub.`,
+          `El pago de Wompi (ref: ${transaction.id}) NO fue registrado en WispHub.`,
       );
-      return;
+    } else {
+      this.logger.log(
+        `Cliente ${customerId}: ${pendingInvoices.length} factura(s) pendiente(s). ` +
+          `Registrando pago en factura ID=${targetInvoice.id}`,
+      );
     }
-
-    // Seleccionar la factura más reciente (primera en la lista, ordenada por fecha desc)
-    const targetInvoice = pendingInvoices[0];
-    this.logger.log(
-      `Cliente ${customerId}: ${pendingInvoices.length} factura(s) pendiente(s). ` +
-      `Registrando pago en factura ID=${targetInvoice.id}`,
-    );
 
     // ─── Guardar en Base de Datos (PostgreSQL) ──────────────────────────────
     try {
       const paymentRecord = this.paymentRecordRepository.create({
         transactionId: transaction.id,
         customerId: String(customerId),
-        invoiceId: Number(targetInvoice.id),
+        invoiceId: targetInvoice ? Number(targetInvoice.id) : 0,
         amountInCents: transaction.amount_in_cents,
         currency: transaction.currency,
         status: transaction.status,
         paymentMethod: transaction.payment_method?.type,
-        metadata: metadata,
+        metadata: {
+          ...metadata,
+          wisphubSyncStatus: targetInvoice ? 'PENDING' : 'NO_INVOICE_FOUND',
+          wisphubSyncError:
+            fetchError ||
+            (!targetInvoice ? 'No se encontraron facturas pendientes' : null),
+        },
       });
 
       await this.paymentRecordRepository.save(paymentRecord);
@@ -189,6 +197,15 @@ export class PaymentsService {
       );
     }
 
+    // Si no hay factura destino, abortar el registro en Wisphub
+    if (!targetInvoice) {
+      return;
+    }
+
+    // Si tiene 3 o más facturas pendientes, SOLO registrar el pago (acción 0).
+    // Si tiene menos de 3, Registrar y Activar (acción 1).
+    const accionWispHub = pendingInvoices.length >= 3 ? 0 : 1;
+
     // ─── Registrar el pago en WispHub (vía Scraping Web) ──────────────────────
     try {
       await this.wisphubWebService.registerPayment(
@@ -196,15 +213,17 @@ export class PaymentsService {
         String(targetInvoice.id),
         transaction.amount_in_cents,
         transaction.id,
-        1 // 1 = Registrar pago y reconectar servicio automáticamente
+        accionWispHub,
       );
     } catch (error) {
-      this.logger.error(`Falló el reporte del pago a WispHub Web: ${error.message}`);
+      this.logger.error(
+        `Falló el reporte del pago a WispHub Web: ${error.message}`,
+      );
     }
 
     this.logger.log(
-      `Pago registrado exitosamente: cliente=${customerId}, factura=${targetInvoice.id}, ` +
-      `monto=${transaction.amount_in_cents / 100} COP, ref=${transaction.id}`,
+      `Pago registrado exitosamente en WispHub: cliente=${customerId}, factura=${targetInvoice.id}, ` +
+        `monto=${transaction.amount_in_cents / 100} COP, ref=${transaction.id}`,
     );
   }
 
