@@ -130,10 +130,16 @@ export class PaymentsService {
     }
 
     // El metadata ya fue extraído arriba para la firma
-    const customerId = metadata.customerId || metadata.customer_id;
+    const customerId = 
+      metadata.customerId || 
+      metadata.customer_id || 
+      transaction.customer_data?.legal_id || 
+      transaction.customer_data?.legalId;
 
     if (!customerId) {
-      this.logger.warn('Transacción aprobada sin customerId en metadata');
+      this.logger.warn(
+        `Transacción aprobada sin customerId en metadata o customer_data. Transaction: ${JSON.stringify(transaction)}`
+      );
       return;
     }
 
