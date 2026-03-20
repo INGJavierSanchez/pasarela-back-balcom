@@ -245,11 +245,12 @@ export class PaymentsService {
 
     // ─── Registrar el pago en WispHub (vía Scraping Web) ──────────────────────
     try {
-      await this.wisphubWebService.registerPayment(
-        this.wisphubCredentials,
-        String(targetInvoice.id),
+      await this.registerPaymentInWisphubWithFallback(
+        Number(targetInvoice.id),
         transaction.amount_in_cents,
         transaction.id,
+        transaction.status,
+        transaction.currency,
         accionWispHub,
       );
 
@@ -336,9 +337,22 @@ export class PaymentsService {
   private async reconcileApprovedPaymentsInReport(
     records: PaymentRecord[],
   ): Promise<void> {
+    const processedInvoiceIds = new Set<number>();
+
     for (const record of records) {
       if (record.status !== 'APPROVED') continue;
       if (record.metadata?.wisphubSyncStatus === 'SUCCESS') continue;
+
+       const invoiceId = Number(record.invoiceId);
+       if (invoiceId > 0) {
+        if (processedInvoiceIds.has(invoiceId)) {
+          this.logger.debug(
+            `Reconciliacion: factura ${invoiceId} ya procesada en esta consulta. Se omite tx=${record.transactionId}.`,
+          );
+          continue;
+        }
+        processedInvoiceIds.add(invoiceId);
+      }
 
       await this.reconcileSingleApprovedPayment(record);
     }
@@ -382,11 +396,12 @@ export class PaymentsService {
         `Reconciliando tx=${txId}: reintentando registro en WispHub para factura=${record.invoiceId}.`,
       );
 
-      await this.wisphubWebService.registerPayment(
-        this.wisphubCredentials,
+      await this.registerPaymentInWisphubWithFallback(
         record.invoiceId,
         record.amountInCents,
         txId,
+        record.status,
+        record.currency,
         action,
       );
 
@@ -480,6 +495,42 @@ export class PaymentsService {
       );
       return 1;
     }
+  }
+
+  private async registerPaymentInWisphubWithFallback(
+    invoiceId: number,
+    amountInCents: number,
+    transactionId: string,
+    status: string,
+    currency: string,
+    action: number,
+  ): Promise<void> {
+    try {
+      await this.wisphubWebService.registerPayment(
+        this.wisphubCredentials,
+        invoiceId,
+        amountInCents,
+        transactionId,
+        action,
+      );
+      return;
+    } catch (webError) {
+      const webMsg = webError instanceof Error ? webError.message : String(webError);
+      this.logger.warn(
+        `Registro web en WispHub fallo para factura ${invoiceId}. Se intentara fallback API: ${webMsg}`,
+      );
+    }
+
+    const dto: RegisterPaymentDto = {
+      invoiceId,
+      amountInCents,
+      transactionId,
+      status,
+      currency,
+      accion: action === 0 ? 0 : 1,
+    };
+
+    await this.wisphubService.registerPayment(invoiceId, dto);
   }
 
   private async updatePaymentSyncMetadata(

@@ -518,16 +518,29 @@ export class WisphubWebService {
     let formCsrf = session.csrfToken;
     let formaPagoId = '1'; // Default
     const existingFields: Record<string, string> = {};
+    let submitName: string | null = null;
+    let submitValue: string | null = null;
     try {
       this.logger.debug(`Cargando vista del formulario de pago WispHub: ${url}`);
       const pageResp = await firstValueFrom(
         this.http.get(url, { headers: { Cookie: session.sessionCookies } })
       );
       const $ = cheerio.load(pageResp.data as string);
-      const newCsrf = $('input[name="csrfmiddlewaretoken"]').val() as string;
+
+      const targetForm = $('form').filter((_, formEl) => {
+        const form = $(formEl);
+        return (
+          form.find('input[name="csrfmiddlewaretoken"]').length > 0 &&
+          form.find('[name="total_cobrado"]').length > 0
+        );
+      }).first();
+
+      const formRoot = targetForm.length > 0 ? targetForm : $('form').first();
+
+      const newCsrf = formRoot.find('input[name="csrfmiddlewaretoken"]').val() as string;
       if (newCsrf) formCsrf = newCsrf;
 
-      $('form input:not([type="file"])').each((_, el) => {
+      formRoot.find('input:not([type="file"])').each((_, el) => {
         const name = $(el).attr('name');
         if (!name) return;
 
@@ -539,25 +552,53 @@ export class WisphubWebService {
         existingFields[name] = String($(el).val() ?? '');
       });
 
-      $('form select').each((_, el) => {
+      formRoot.find('select').each((_, el) => {
         const name = $(el).attr('name');
         if (!name) return;
         existingFields[name] = String($(el).val() ?? '');
       });
 
-      $('form textarea').each((_, el) => {
+      formRoot.find('textarea').each((_, el) => {
         const name = $(el).attr('name');
         if (!name) return;
         existingFields[name] = String($(el).val() ?? '');
       });
+
+      const submit = formRoot
+        .find('button[type="submit"], button:not([type]), input[type="submit"]')
+        .first();
+      if (submit.length > 0) {
+        const rawName = String(submit.attr('name') ?? '').trim();
+        const rawValue =
+          String(submit.attr('value') ?? '').trim() || submit.text().trim();
+
+        if (rawName) {
+          submitName = rawName;
+          submitValue = rawValue;
+        }
+      }
       
-      $('select[name="forma_pago"] option').each((_, el) => {
+      formRoot.find('select[name="forma_pago"] option').each((_, el) => {
         const text = $(el).text().trim().toLowerCase();
         if (text.includes('wompi')) {
           formaPagoId = $(el).attr('value') as string || formaPagoId;
         }
       });
       this.logger.debug(`Forma de pago detectada para Wompi: ${formaPagoId}`);
+
+      const requiredEmpty: string[] = [];
+      formRoot.find('[name][required]').each((_, el) => {
+        const name = String($(el).attr('name') ?? '').trim();
+        if (!name) return;
+        const val = String(existingFields[name] ?? '').trim();
+        if (!val) requiredEmpty.push(name);
+      });
+
+      if (requiredEmpty.length > 0) {
+        this.logger.warn(
+          `Campos required vacios en formulario WispHub antes de enviar: ${requiredEmpty.join(', ')}`,
+        );
+      }
     } catch (e) {
       this.logger.warn(`Error leyendo el formulario de WispHub, usando valores por defecto: ${e.message}`);
     }
@@ -572,6 +613,10 @@ export class WisphubWebService {
       accion: String(action),             // 0 o 1
       comentario: `Pago generado vía Wompi Automático. Ref Wompi: ${reference}`, // Guardamos la url/referencia aquí
     };
+
+    if (submitName) {
+      payload[submitName] = submitValue ?? '1';
+    }
 
     const formData = new URLSearchParams();
     for (const [key, value] of Object.entries(payload)) {
@@ -631,9 +676,26 @@ export class WisphubWebService {
           .trim();
 
         if (errorText) {
+          const nonFieldError = $('ul.errorlist.nonfield, ul.errorlist.non_field_errors')
+            .text()
+            .replace(/\s+/g, ' ')
+            .trim();
+
           const fieldErrors = $('ul.errorlist').map((_, el) => {
-            const input = $(el).prev('input, select, textarea');
-            const fieldName = String(input.attr('name') ?? 'desconocido');
+            if ($(el).hasClass('nonfield')) {
+              const msg = $(el).text().replace(/\s+/g, ' ').trim();
+              return `__all__: ${msg}`;
+            }
+
+            const container = $(el).closest('div, td, tr, li');
+            const input = container.find('input[name], select[name], textarea[name]').first();
+            const candidateByFor = $(el).prev('label[for]').attr('for');
+            const byFor = candidateByFor
+              ? $(`#${candidateByFor}`).attr('name')
+              : undefined;
+            const fieldName = String(
+              input.attr('name') ?? byFor ?? 'desconocido',
+            );
             const msg = $(el).text().replace(/\s+/g, ' ').trim();
             return `${fieldName}: ${msg}`;
           }).get();
@@ -641,6 +703,9 @@ export class WisphubWebService {
             this.logger.error(
               `Detalle de validacion WispHub: ${fieldErrors.join(' | ')}`,
             );
+          }
+          if (nonFieldError) {
+            this.logger.error(`Detalle non_field_errors WispHub: ${nonFieldError}`);
           }
           throw new Error(`WispHub validacion: ${errorText}`);
         }
