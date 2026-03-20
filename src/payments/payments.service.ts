@@ -221,6 +221,13 @@ export class PaymentsService {
       } else {
         this.logger.log(`El pago Wompi ${transaction.id} ya existe en la Base de Datos. Procediendo a reintentar WispHub...`);
       }
+
+      if (paymentRecord?.metadata?.wisphubSyncStatus === 'SUCCESS') {
+        this.logger.log(
+          `La transaccion ${transaction.id} ya estaba sincronizada en WispHub (idempotencia).`,
+        );
+        return;
+      }
     } catch (dbError) {
       this.logger.error(
         `Error guardando el pago en la base de datos. Transaction ID: ${transaction.id} - ${dbError.message}`,
@@ -245,16 +252,40 @@ export class PaymentsService {
         transaction.id,
         accionWispHub,
       );
+
+      const existingRecord = await this.paymentRecordRepository.findOne({
+        where: { transactionId: transaction.id }
+      });
+      if (existingRecord) {
+        existingRecord.metadata = {
+          ...existingRecord.metadata,
+          wisphubSyncStatus: 'SUCCESS',
+          wisphubSyncAt: new Date().toISOString(),
+          wisphubSyncError: null,
+        };
+        await this.paymentRecordRepository.save(existingRecord);
+      }
+
+      this.logger.log(
+        `Pago registrado exitosamente en WispHub: cliente=${customerId}, factura=${targetInvoice.id}, ` +
+          `monto=${transaction.amount_in_cents / 100} COP, ref=${transaction.id}`,
+      );
     } catch (error) {
       this.logger.error(
         `Falló el reporte del pago a WispHub Web: ${error.message}`,
       );
+      const existingRecord = await this.paymentRecordRepository.findOne({
+        where: { transactionId: transaction.id }
+      });
+      if (existingRecord) {
+        existingRecord.metadata = {
+          ...existingRecord.metadata,
+          wisphubSyncStatus: 'ERROR',
+          wisphubSyncError: error.message,
+        };
+        await this.paymentRecordRepository.save(existingRecord);
+      }
     }
-
-    this.logger.log(
-      `Pago registrado exitosamente en WispHub: cliente=${customerId}, factura=${targetInvoice.id}, ` +
-        `monto=${transaction.amount_in_cents / 100} COP, ref=${transaction.id}`,
-    );
   }
 
   async getReport(filters: GetPaymentsReportDto) {

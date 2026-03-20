@@ -502,11 +502,11 @@ export class WisphubWebService {
     // Convertir centavos (Wompi) → pesos (WispHub)
     const totalCobrado = amount / 100;
 
-    // Formatear fecha "DD/MM/YYYY HH:mm" (formato que espera el form web de WispHub)
+    // Formato observado en el input de WispHub: YYYY-MM-DD HH:mm
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const fechaPago =
-      `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ` +
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
       `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
     this.logger.log(
@@ -565,18 +565,104 @@ export class WisphubWebService {
 
       this.logger.debug(`Respuesta registro pago web: status=${resp.status}`);
 
-      // WispHub web retorna 302 Found redirigiendo a la lista de facturas cuando el POST es exitoso
-      if (resp.status === 302 || resp.status === 200) {
+      if (resp.status === 302 || resp.status === 301) {
+        const location = String(resp.headers?.location ?? '');
+        if (location.includes('/accounts/login')) {
+          throw new UnauthorizedException(
+            'WispHub redirigio al login al registrar el pago.',
+          );
+        }
+
+        const confirmed = await this.confirmInvoiceNotPending(
+          credentials,
+          String(invoiceId),
+        );
+        if (!confirmed) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          const confirmedRetry = await this.confirmInvoiceNotPending(
+            credentials,
+            String(invoiceId),
+          );
+          if (!confirmedRetry) {
+            throw new Error(
+              `WispHub respondio ${resp.status}, pero la factura ${invoiceId} sigue pendiente.`,
+            );
+          }
+        }
+
         return `Pago registrado exitosamente en WispHub (Factura ${invoiceId}).`;
-      } else {
-        this.logger.warn(`El registro de pago devolvió status ${resp.status}`);
       }
-      return 'Respuesta no confirmada al registrar pago web.';
+
+      if (resp.status === 200) {
+        const $ = cheerio.load(resp.data as string);
+        const errorText = $('.errorlist, .alert-danger, .has-error, .invalid-feedback')
+          .text()
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (errorText) {
+          throw new Error(`WispHub validacion: ${errorText}`);
+        }
+
+        throw new Error(
+          'WispHub devolvio 200 al registrar pago y no confirmo redireccion de exito.',
+        );
+      }
+
+      throw new Error(`Status inesperado al registrar pago: ${resp.status}`);
     } catch (err) {
       if (err instanceof UnauthorizedException) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Error guardando pago por web: ${msg}`);
       throw new Error(`Error registrando el pago en WispHub web: ${msg}`);
+    }
+  }
+
+  private async confirmInvoiceNotPending(
+    credentials: WisphubLoginDto,
+    invoiceId: string,
+  ): Promise<boolean> {
+    try {
+      const result = (await this.getFacturas(
+        credentials,
+        invoiceId,
+        'id_factura',
+        'Exacta',
+        undefined,
+        undefined,
+        undefined,
+        'fecha_emision',
+        undefined,
+        1,
+        20,
+      )) as any;
+
+      const rows = Array.isArray(result?.data)
+        ? result.data
+        : Array.isArray(result)
+          ? result
+          : [];
+
+      const target = rows.find(
+        (row: any) =>
+          String(row?.id_factura ?? row?.id ?? '') === String(invoiceId),
+      );
+
+      if (!target) {
+        this.logger.warn(
+          `No fue posible confirmar el estado de la factura ${invoiceId} tras registrar pago.`,
+        );
+        return false;
+      }
+
+      const estado = String(target.estado ?? '').toLowerCase();
+      return !estado.includes('pendiente');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `No se pudo verificar estado final de factura ${invoiceId}: ${msg}`,
+      );
+      return false;
     }
   }
 
