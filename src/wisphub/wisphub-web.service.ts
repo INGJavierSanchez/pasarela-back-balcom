@@ -513,10 +513,11 @@ export class WisphubWebService {
       `Registrando pago via Web (Scraping) en WispHub: factura=${invoiceId}, ref=${reference}, monto=${totalCobrado}`
     );
 
-    // Los campos requeridos por el form web de django de WispHub
-    // GET a la forma para sacar CSRF Fresco y el ID exacto de la Forma de Pago ("Wompi")
+    // GET del formulario para capturar CSRF y los valores actuales del form.
+    // Esto evita romper cuando WispHub agrega/cambia campos requeridos.
     let formCsrf = session.csrfToken;
     let formaPagoId = '1'; // Default
+    const existingFields: Record<string, string> = {};
     try {
       this.logger.debug(`Cargando vista del formulario de pago WispHub: ${url}`);
       const pageResp = await firstValueFrom(
@@ -525,6 +526,30 @@ export class WisphubWebService {
       const $ = cheerio.load(pageResp.data as string);
       const newCsrf = $('input[name="csrfmiddlewaretoken"]').val() as string;
       if (newCsrf) formCsrf = newCsrf;
+
+      $('form input:not([type="file"])').each((_, el) => {
+        const name = $(el).attr('name');
+        if (!name) return;
+
+        const type = String($(el).attr('type') ?? '').toLowerCase();
+        if ((type === 'checkbox' || type === 'radio') && !$(el).is(':checked')) {
+          return;
+        }
+
+        existingFields[name] = String($(el).val() ?? '');
+      });
+
+      $('form select').each((_, el) => {
+        const name = $(el).attr('name');
+        if (!name) return;
+        existingFields[name] = String($(el).val() ?? '');
+      });
+
+      $('form textarea').each((_, el) => {
+        const name = $(el).attr('name');
+        if (!name) return;
+        existingFields[name] = String($(el).val() ?? '');
+      });
       
       $('select[name="forma_pago"] option').each((_, el) => {
         const text = $(el).text().trim().toLowerCase();
@@ -537,7 +562,8 @@ export class WisphubWebService {
       this.logger.warn(`Error leyendo el formulario de WispHub, usando valores por defecto: ${e.message}`);
     }
 
-    const formData = new URLSearchParams({
+    const payload: Record<string, string> = {
+      ...existingFields,
       csrfmiddlewaretoken: formCsrf,
       referencia: String(invoiceId), // Solicitado por el usuario: poner el id_factura
       fecha_pago: fechaPago,
@@ -545,8 +571,12 @@ export class WisphubWebService {
       forma_pago: formaPagoId,            // ID encontrado dinámicamente
       accion: String(action),             // 0 o 1
       comentario: `Pago generado vía Wompi Automático. Ref Wompi: ${reference}`, // Guardamos la url/referencia aquí
-      cajero: '',
-    });
+    };
+
+    const formData = new URLSearchParams();
+    for (const [key, value] of Object.entries(payload)) {
+      formData.append(key, String(value));
+    }
 
     try {
       const resp = await firstValueFrom(
@@ -601,6 +631,17 @@ export class WisphubWebService {
           .trim();
 
         if (errorText) {
+          const fieldErrors = $('ul.errorlist').map((_, el) => {
+            const input = $(el).prev('input, select, textarea');
+            const fieldName = String(input.attr('name') ?? 'desconocido');
+            const msg = $(el).text().replace(/\s+/g, ' ').trim();
+            return `${fieldName}: ${msg}`;
+          }).get();
+          if (fieldErrors.length > 0) {
+            this.logger.error(
+              `Detalle de validacion WispHub: ${fieldErrors.join(' | ')}`,
+            );
+          }
           throw new Error(`WispHub validacion: ${errorText}`);
         }
 
