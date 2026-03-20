@@ -320,6 +320,8 @@ export class PaymentsService {
       .take(limit)
       .getMany();
 
+    await this.reconcileApprovedPaymentsInReport(data);
+
     return {
       data,
       meta: {
@@ -329,5 +331,172 @@ export class PaymentsService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  private async reconcileApprovedPaymentsInReport(
+    records: PaymentRecord[],
+  ): Promise<void> {
+    for (const record of records) {
+      if (record.status !== 'APPROVED') continue;
+      if (record.metadata?.wisphubSyncStatus === 'SUCCESS') continue;
+
+      await this.reconcileSingleApprovedPayment(record);
+    }
+  }
+
+  private async reconcileSingleApprovedPayment(
+    record: PaymentRecord,
+  ): Promise<void> {
+    const txId = record.transactionId;
+
+    try {
+      if (!record.invoiceId || Number(record.invoiceId) <= 0) {
+        await this.updatePaymentSyncMetadata(record, {
+          wisphubSyncStatus: 'ERROR',
+          wisphubSyncError:
+            'No hay invoiceId en BD para reconciliar contra WispHub.',
+          wisphubSyncAt: new Date().toISOString(),
+        });
+        this.logger.warn(
+          `Reconciliacion omitida para tx=${txId}: invoiceId invalido (${record.invoiceId}).`,
+        );
+        return;
+      }
+
+      const preState = await this.getWisphubInvoiceState(record.invoiceId);
+      if (preState === 'paid') {
+        await this.updatePaymentSyncMetadata(record, {
+          wisphubSyncStatus: 'SUCCESS',
+          wisphubSyncError: null,
+          wisphubSyncAt: new Date().toISOString(),
+        });
+        this.logger.log(
+          `Reconciliacion tx=${txId}: la factura ${record.invoiceId} ya estaba pagada en WispHub.`,
+        );
+        return;
+      }
+
+      const action = await this.resolveWisphubAction(record.customerId);
+
+      this.logger.log(
+        `Reconciliando tx=${txId}: reintentando registro en WispHub para factura=${record.invoiceId}.`,
+      );
+
+      await this.wisphubWebService.registerPayment(
+        this.wisphubCredentials,
+        record.invoiceId,
+        record.amountInCents,
+        txId,
+        action,
+      );
+
+      const postState = await this.getWisphubInvoiceState(record.invoiceId);
+      if (postState === 'paid') {
+        await this.updatePaymentSyncMetadata(record, {
+          wisphubSyncStatus: 'SUCCESS',
+          wisphubSyncError: null,
+          wisphubSyncAt: new Date().toISOString(),
+        });
+        this.logger.log(
+          `Reconciliacion tx=${txId} completada: factura ${record.invoiceId} ahora esta pagada en WispHub.`,
+        );
+        return;
+      }
+
+      await this.updatePaymentSyncMetadata(record, {
+        wisphubSyncStatus: 'ERROR',
+        wisphubSyncError:
+          `Se reintento registro en WispHub, pero la factura ${record.invoiceId} sigue pendiente.`,
+        wisphubSyncAt: new Date().toISOString(),
+      });
+
+      this.logger.warn(
+        `Reconciliacion tx=${txId}: WispHub mantiene factura ${record.invoiceId} en pendiente.`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await this.updatePaymentSyncMetadata(record, {
+        wisphubSyncStatus: 'ERROR',
+        wisphubSyncError: `Reconciliacion fallida: ${msg}`,
+        wisphubSyncAt: new Date().toISOString(),
+      });
+      this.logger.error(`Reconciliacion tx=${txId} fallo: ${msg}`);
+    }
+  }
+
+  private async getWisphubInvoiceState(
+    invoiceId: number,
+  ): Promise<'pending' | 'paid' | 'not_found'> {
+    try {
+      const result = (await this.wisphubWebService.getFacturas(
+        this.wisphubCredentials,
+        String(invoiceId),
+        'id_factura',
+        'Exacta',
+        undefined,
+        undefined,
+        undefined,
+        'fecha_emision',
+        undefined,
+        1,
+        20,
+      )) as any;
+
+      const rows = Array.isArray(result?.data)
+        ? result.data
+        : Array.isArray(result)
+          ? result
+          : [];
+
+      const target = rows.find(
+        (row: any) => String(row?.id_factura ?? row?.id ?? '') === String(invoiceId),
+      );
+
+      if (!target) return 'not_found';
+
+      const estado = String(target?.estado ?? '').toLowerCase();
+      if (estado.includes('pendiente')) return 'pending';
+      return 'paid';
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `No se pudo consultar estado actual de factura ${invoiceId} en WispHub: ${msg}`,
+      );
+      return 'not_found';
+    }
+  }
+
+  private async resolveWisphubAction(customerId: string): Promise<number> {
+    try {
+      const invoices = await this.wisphubWebService.getClienteFacturas(
+        this.wisphubCredentials,
+        customerId,
+      );
+      return invoices.pending.length >= 3 ? 0 : 1;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `No se pudo calcular accion WispHub para cliente ${customerId}. Se usa accion=1. Error: ${msg}`,
+      );
+      return 1;
+    }
+  }
+
+  private async updatePaymentSyncMetadata(
+    record: PaymentRecord,
+    patch: Record<string, any>,
+  ): Promise<void> {
+    const freshRecord = await this.paymentRecordRepository.findOne({
+      where: { id: record.id },
+    });
+    if (!freshRecord) return;
+
+    freshRecord.metadata = {
+      ...(freshRecord.metadata ?? {}),
+      ...patch,
+    };
+    await this.paymentRecordRepository.save(freshRecord);
+
+    record.metadata = freshRecord.metadata;
   }
 }
