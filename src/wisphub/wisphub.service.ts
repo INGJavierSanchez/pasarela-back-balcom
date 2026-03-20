@@ -146,6 +146,7 @@ export class WisphubService {
         referencia: dto.transactionId,
         fecha_pago: fechaPago,
         total_cobrado: totalCobrado,
+        estado_pago: dto.estado_pago ?? 1,
         accion: dto.accion ?? 1, // Por defecto: registrar Y reactivar servicio
         forma_pago: dto.forma_pago ?? 1, // Por defecto: primer método de pago disponible
       };
@@ -228,6 +229,9 @@ export class WisphubService {
     this.logger.error(
       `${operation} failed: status=${status} message=${error.message}`,
       error.stack,
+    );
+    this.logger.error(
+      `${operation} response payload: ${JSON.stringify(payload)}`,
     );
     throw new HttpException(payload, status);
   }

@@ -518,6 +518,7 @@ export class WisphubWebService {
     let formCsrf = session.csrfToken;
     let formaPagoId = '1'; // Default
     const existingFields: Record<string, string> = {};
+    const requiredFieldNames: string[] = [];
     let submitName: string | null = null;
     let submitValue: string | null = null;
     try {
@@ -586,19 +587,13 @@ export class WisphubWebService {
       });
       this.logger.debug(`Forma de pago detectada para Wompi: ${formaPagoId}`);
 
-      const requiredEmpty: string[] = [];
       formRoot.find('[name][required]').each((_, el) => {
         const name = String($(el).attr('name') ?? '').trim();
         if (!name) return;
-        const val = String(existingFields[name] ?? '').trim();
-        if (!val) requiredEmpty.push(name);
+        if (!requiredFieldNames.includes(name)) {
+          requiredFieldNames.push(name);
+        }
       });
-
-      if (requiredEmpty.length > 0) {
-        this.logger.warn(
-          `Campos required vacios en formulario WispHub antes de enviar: ${requiredEmpty.join(', ')}`,
-        );
-      }
     } catch (e) {
       this.logger.warn(`Error leyendo el formulario de WispHub, usando valores por defecto: ${e.message}`);
     }
@@ -614,8 +609,20 @@ export class WisphubWebService {
       comentario: `Pago generado vía Wompi Automático. Ref Wompi: ${reference}`, // Guardamos la url/referencia aquí
     };
 
+    payload.estado_pago = String(payload.estado_pago ?? '').trim() || '1';
+
     if (submitName) {
       payload[submitName] = submitValue ?? '1';
+    }
+
+    const requiredEmpty = requiredFieldNames.filter((name) => {
+      const val = String(payload[name] ?? '').trim();
+      return !val;
+    });
+    if (requiredEmpty.length > 0) {
+      this.logger.warn(
+        `Campos required vacios en formulario WispHub antes de enviar: ${requiredEmpty.join(', ')}`,
+      );
     }
 
     const formData = new URLSearchParams();

@@ -527,6 +527,7 @@ export class PaymentsService {
       transactionId,
       status,
       currency,
+      estado_pago: 1,
       accion: action === 0 ? 0 : 1,
     };
 

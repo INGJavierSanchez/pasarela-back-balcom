@@ -50,6 +50,11 @@ export class RegisterPaymentDto {
   @IsOptional()
   forma_pago?: number;
 
+  /** Estado del pago en WispHub (por defecto: 1) */
+  @IsInt()
+  @IsOptional()
+  estado_pago?: number;
+
   /** Metadatos adicionales de la transacción de Wompi */
   @IsObject()
   @IsOptional()
