@@ -142,13 +142,15 @@ export class WisphubService {
         `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
         `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
+      const formaPagoId = await this.resolvePaymentMethodId(dto.forma_pago);
+
       const payload = {
         referencia: dto.transactionId,
         fecha_pago: fechaPago,
         total_cobrado: totalCobrado,
         estado_pago: dto.estado_pago ?? 1,
         accion: dto.accion ?? 1, // Por defecto: registrar Y reactivar servicio
-        forma_pago: dto.forma_pago ?? 1, // Por defecto: primer método de pago disponible
+        forma_pago: formaPagoId,
       };
 
       this.logger.log(
@@ -165,6 +167,38 @@ export class WisphubService {
     } catch (error) {
       this.handleError('registerPayment', error as AxiosError);
     }
+  }
+
+  private async resolvePaymentMethodId(preferredId?: number): Promise<number> {
+    if (preferredId && preferredId > 0) return preferredId;
+
+    try {
+      const methods = await this.getPaymentMethods();
+      const list = Array.isArray(methods) ? methods : [];
+
+      const wompi = list.find((m) =>
+        String(m?.nombre ?? '').toLowerCase().includes('wompi'),
+      );
+      if (wompi?.id) {
+        this.logger.debug(`Forma de pago Wompi detectada por API: ${wompi.id}`);
+        return wompi.id;
+      }
+
+      const firstValid = list.find((m) => Number(m?.id) > 0);
+      if (firstValid?.id) {
+        this.logger.warn(
+          `No se encontro forma de pago "Wompi" en API. Se usara la primera disponible: ${firstValid.id}`,
+        );
+        return firstValid.id;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `No se pudo resolver forma de pago via API. Se usara valor por defecto 1. Error: ${msg}`,
+      );
+    }
+
+    return 1;
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

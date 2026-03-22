@@ -717,6 +717,29 @@ export class WisphubWebService {
           throw new Error(`WispHub validacion: ${errorText}`);
         }
 
+        const confirmed = await this.confirmInvoiceNotPending(
+          credentials,
+          String(invoiceId),
+        );
+        if (confirmed) {
+          this.logger.warn(
+            `WispHub devolvio 200 sin errores visibles, pero la factura ${invoiceId} quedo pagada. Se toma como exito.`,
+          );
+          return `Pago registrado exitosamente en WispHub (Factura ${invoiceId}).`;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const confirmedRetry = await this.confirmInvoiceNotPending(
+          credentials,
+          String(invoiceId),
+        );
+        if (confirmedRetry) {
+          this.logger.warn(
+            `WispHub devolvio 200 sin redireccion, pero la factura ${invoiceId} se marco como pagada tras reintento de verificacion.`,
+          );
+          return `Pago registrado exitosamente en WispHub (Factura ${invoiceId}).`;
+        }
+
         throw new Error(
           'WispHub devolvio 200 al registrar pago y no confirmo redireccion de exito.',
         );
