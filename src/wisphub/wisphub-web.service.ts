@@ -311,7 +311,7 @@ export class WisphubWebService {
         amount: parseFloat(f.total ?? f.sub_total ?? '0'),
         currency: 'COP',
         issueDate: parseWisphubDate(f.fecha_emision ?? ''),
-        dueDate: parseWisphubDate(f.fecha_emision ?? ''),
+        dueDate: parseWisphubDate(f.fecha_vencimiento ?? ''),
         paidDate: f.fecha_pago ? parseWisphubDate(f.fecha_pago) : undefined,
         status: normalizeEstado(f.estado ?? ''),
         reference: f.num_contrato ?? undefined,
