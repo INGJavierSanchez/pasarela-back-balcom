@@ -7,7 +7,7 @@ import { WisphubModule } from './wisphub/wisphub.module';
 import { HealthModule } from './health/health.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
-import { LogsModule } from './logs/logs.module';
+import { PaymentLogsModule } from './payment-logs/payment-logs.module';
 
 @Module({
   imports: [
@@ -77,7 +77,7 @@ import { LogsModule } from './logs/logs.module';
     PaymentsModule,
     UsersModule,
     AuthModule,
-    LogsModule,
+    PaymentLogsModule,
   ],
   controllers: [],
   providers: [],
