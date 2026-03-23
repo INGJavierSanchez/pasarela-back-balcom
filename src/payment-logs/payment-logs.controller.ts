@@ -2,7 +2,7 @@ import { Controller, Get, Delete, HttpStatus, HttpException, Header } from '@nes
 import * as fs from 'fs';
 import * as path from 'path';
 
-@Controller('payment-logs')
+@Controller(['payment-logs', 'logs'])
 export class PaymentLogsController {
     private readonly logsPath = path.join(process.cwd(), 'logs', 'combined.log');
     private readonly errorLogsPath = path.join(process.cwd(), 'logs', 'error.log');
