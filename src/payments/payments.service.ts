@@ -117,10 +117,15 @@ export class PaymentsService {
     // Extraer metadata para saber qué configuración se usó
     const metadata =
       transaction.payment_link?.data?.metadata ?? transaction.metadata ?? {};
-    const configKey = metadata.wompiConfig || 'DEFAULT';
+    const declaredConfigKey = metadata.wompiConfig || 'DEFAULT';
 
     // Validar firma con la configuración correspondiente
-    this.wompiService.assertSignature(signature, payload, rawBody, configKey as 'DEFAULT' | 'MAG');
+    const validatedConfigKey = this.wompiService.assertSignature(
+      signature,
+      payload,
+      rawBody,
+      declaredConfigKey as 'DEFAULT' | 'MAG',
+    );
 
     if (transaction.status !== 'APPROVED') {
       this.logger.log(
@@ -141,7 +146,7 @@ export class PaymentsService {
       try {
         const linkData = await this.wompiService.getPaymentLink(
           transaction.payment_link_id,
-          configKey as 'DEFAULT' | 'MAG'
+          validatedConfigKey as 'DEFAULT' | 'MAG'
         );
         customerId = 
           linkData?.metadata?.customerId || 

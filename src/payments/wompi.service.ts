@@ -106,11 +106,10 @@ export class WompiService {
     payload: any,
     rawBody?: string,
     configKey: 'DEFAULT' | 'MAG' = 'DEFAULT',
-  ) {
-    const keySuffix = configKey === 'MAG' ? '_MAG' : '';
-    const secret = this.configService.get<string>(`WOMPI_EVENTS_SECRET${keySuffix}`);
+  ): 'DEFAULT' | 'MAG' {
+    const secretCandidates = this.getSecretCandidates(configKey);
 
-    if (!secret) {
+    if (secretCandidates.length === 0) {
       throw new UnauthorizedException('Missing events secret in config');
     }
 
@@ -121,29 +120,38 @@ export class WompiService {
       Array.isArray(payload.signature.properties)
     ) {
       this.logger.debug('Validando firma Wompi con el nuevo método Checksum (SHA256)');
-      let concatenatedValues = '';
 
-      for (const propPath of payload.signature.properties) {
-        // propPath ej: "transaction.id"
-        const parts = propPath.split('.');
-        let val: any = payload.data;
-        for (const part of parts) {
-          if (val === undefined || val === null) break;
-          val = val[part];
+      for (const candidate of secretCandidates) {
+        const computedFromData = this.computeChecksum(payload, candidate.secret, 'data');
+        if (computedFromData === payload.signature.checksum) {
+          if (candidate.key !== configKey) {
+            this.logger.warn(
+              `Firma validada con secreto alterno (${candidate.key}) en lugar de ${configKey}.`,
+            );
+          }
+          return candidate.key;
         }
-        concatenatedValues += (val ?? '');
+
+        const computedFromRoot = this.computeChecksum(payload, candidate.secret, 'root');
+        if (computedFromRoot === payload.signature.checksum) {
+          if (candidate.key !== configKey) {
+            this.logger.warn(
+              `Firma validada con secreto alterno (${candidate.key}) en lugar de ${configKey}.`,
+            );
+          }
+          this.logger.warn(
+            'Checksum validado leyendo propiedades desde payload raiz (compatibilidad).',
+          );
+          return candidate.key;
+        }
       }
 
-      const timestamp = payload.timestamp?.toString() || '';
-      const stringToHash = concatenatedValues + timestamp + secret;
-      const computed = createHash('sha256').update(stringToHash).digest('hex');
+      this.logger.error(
+        `Checksum inválido. Recibido: ${payload.signature.checksum}. Config esperada: ${configKey}`,
+      );
+      throw new UnauthorizedException('Invalid Wompi payload checksum');
 
-      if (computed !== payload.signature.checksum) {
-        this.logger.error(`Checksum inválido. Recibido: ${payload.signature.checksum}, Calculado: ${computed}`);
-        throw new UnauthorizedException('Invalid Wompi payload checksum');
-      }
-
-      return; // Validación exitosa
+      // Validación exitosa retorna arriba
     }
 
     // ─── Validación Legacy: cabecera x-event-signature (HMAC SHA256) ────────
@@ -155,15 +163,64 @@ export class WompiService {
     this.logger.debug('Validando firma Wompi con método Legacy (HMAC Header)');
     const parsed = this.parseSignatureHeader(signatureHeader);
     const payloadString = rawBody ?? JSON.stringify(payload);
-    const computedLegacy = this.computeHmac(
-      `${parsed.timestamp}.${payloadString}`,
-      secret,
+
+    for (const candidate of secretCandidates) {
+      const computedLegacy = this.computeHmac(
+        `${parsed.timestamp}.${payloadString}`,
+        candidate.secret,
+      );
+
+      if (computedLegacy === parsed.signature) {
+        if (candidate.key !== configKey) {
+          this.logger.warn(
+            `Firma Legacy validada con secreto alterno (${candidate.key}) en lugar de ${configKey}.`,
+          );
+        }
+        return candidate.key;
+      }
+    }
+
+    this.logger.error(`Firma Legacy inválida. Config esperada: ${configKey}`);
+    throw new UnauthorizedException('Invalid Wompi legacy signature');
+  }
+
+  private computeChecksum(
+    payload: any,
+    secret: string,
+    mode: 'data' | 'root',
+  ): string {
+    let concatenatedValues = '';
+
+    for (const propPath of payload.signature.properties as string[]) {
+      const parts = propPath.split('.');
+      let val: any = mode === 'data' ? payload?.data : payload;
+      for (const part of parts) {
+        if (val === undefined || val === null) break;
+        val = val[part];
+      }
+      concatenatedValues += (val ?? '');
+    }
+
+    const timestamp = payload.timestamp?.toString() || '';
+    const stringToHash = concatenatedValues + timestamp + secret;
+    return createHash('sha256').update(stringToHash).digest('hex');
+  }
+
+  private getSecretCandidates(
+    preferred: 'DEFAULT' | 'MAG',
+  ): Array<{ key: 'DEFAULT' | 'MAG'; secret: string }> {
+    const preferredSecret = this.configService.get<string>(
+      `WOMPI_EVENTS_SECRET${preferred === 'MAG' ? '_MAG' : ''}`,
+    );
+    const fallbackKey: 'DEFAULT' | 'MAG' = preferred === 'MAG' ? 'DEFAULT' : 'MAG';
+    const fallbackSecret = this.configService.get<string>(
+      `WOMPI_EVENTS_SECRET${fallbackKey === 'MAG' ? '_MAG' : ''}`,
     );
 
-    if (computedLegacy !== parsed.signature) {
-      this.logger.error(`Firma Legacy inválida`);
-      throw new UnauthorizedException('Invalid Wompi legacy signature');
-    }
+    const candidates: Array<{ key: 'DEFAULT' | 'MAG'; secret: string }> = [];
+    if (preferredSecret) candidates.push({ key: preferred, secret: preferredSecret });
+    if (fallbackSecret) candidates.push({ key: fallbackKey, secret: fallbackSecret });
+    return candidates;
   }
 
   private computeHmac(content: string, secret?: string) {
