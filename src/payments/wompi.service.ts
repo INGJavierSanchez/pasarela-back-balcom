@@ -42,7 +42,10 @@ export class WompiService {
 
   private getAuthHeaders(configKey?: 'DEFAULT' | 'MAG') {
     const keySuffix = configKey === 'MAG' ? '_MAG' : '';
-    const privateKey = this.configService.get<string>(`WOMPI_PRIVATE_KEY${keySuffix}`);
+    const privateKey =
+      this.configService
+        .get<string>(`WOMPI_PRIVATE_KEY${keySuffix}`)
+        ?.trim() ?? '';
     return {
       Authorization: `Bearer ${privateKey}`,
       'Content-Type': 'application/json',
@@ -120,6 +123,11 @@ export class WompiService {
       Array.isArray(payload.signature.properties)
     ) {
       this.logger.debug('Validando firma Wompi con el nuevo método Checksum (SHA256)');
+      this.logger.debug(
+        `Checksum metadata: configEsperada=${configKey}, propiedades=${JSON.stringify(
+          payload.signature.properties,
+        )}, timestamp=${payload.timestamp ?? ''}`,
+      );
 
       for (const candidate of secretCandidates) {
         const computedFromData = this.computeChecksum(payload, candidate.secret, 'data');
@@ -211,11 +219,11 @@ export class WompiService {
   ): Array<{ key: 'DEFAULT' | 'MAG'; secret: string }> {
     const preferredSecret = this.configService.get<string>(
       `WOMPI_EVENTS_SECRET${preferred === 'MAG' ? '_MAG' : ''}`,
-    );
+    )?.trim();
     const fallbackKey: 'DEFAULT' | 'MAG' = preferred === 'MAG' ? 'DEFAULT' : 'MAG';
     const fallbackSecret = this.configService.get<string>(
       `WOMPI_EVENTS_SECRET${fallbackKey === 'MAG' ? '_MAG' : ''}`,
-    );
+    )?.trim();
 
     const candidates: Array<{ key: 'DEFAULT' | 'MAG'; secret: string }> = [];
     if (preferredSecret) candidates.push({ key: preferred, secret: preferredSecret });

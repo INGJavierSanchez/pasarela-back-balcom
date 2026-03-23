@@ -118,6 +118,9 @@ export class PaymentsService {
     const metadata =
       transaction.payment_link?.data?.metadata ?? transaction.metadata ?? {};
     const declaredConfigKey = metadata.wompiConfig || 'DEFAULT';
+    this.logger.debug(
+      `Webhook recibido: tx=${transaction?.id ?? 'N/A'}, configDeclarada=${declaredConfigKey}`,
+    );
 
     // Validar firma con la configuración correspondiente
     const validatedConfigKey = this.wompiService.assertSignature(
@@ -126,6 +129,11 @@ export class PaymentsService {
       rawBody,
       declaredConfigKey as 'DEFAULT' | 'MAG',
     );
+    if (validatedConfigKey !== declaredConfigKey) {
+      this.logger.warn(
+        `Webhook tx=${transaction?.id ?? 'N/A'} validado con config=${validatedConfigKey} distinta a la declarada (${declaredConfigKey}).`,
+      );
+    }
 
     if (transaction.status !== 'APPROVED') {
       this.logger.log(
