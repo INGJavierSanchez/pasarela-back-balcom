@@ -123,12 +123,21 @@ export class PaymentsService {
     );
 
     // Validar firma con la configuración correspondiente
-    const validatedConfigKey = this.wompiService.assertSignature(
-      signature,
-      payload,
-      rawBody,
-      declaredConfigKey as 'DEFAULT' | 'MAG',
-    );
+    let validatedConfigKey: 'DEFAULT' | 'MAG';
+    try {
+      validatedConfigKey = this.wompiService.assertSignature(
+        signature,
+        payload,
+        rawBody,
+        declaredConfigKey as 'DEFAULT' | 'MAG',
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.error(
+        `Webhook rechazado por firma. tx=${transaction?.id ?? 'N/A'}, customerId=${metadata?.customerId ?? metadata?.customer_id ?? transaction?.customer_data?.legal_id ?? transaction?.customer_data?.legalId ?? 'N/A'}, configDeclarada=${declaredConfigKey}, motivo=${msg}`,
+      );
+      throw e;
+    }
     if (validatedConfigKey !== declaredConfigKey) {
       this.logger.warn(
         `Webhook tx=${transaction?.id ?? 'N/A'} validado con config=${validatedConfigKey} distinta a la declarada (${declaredConfigKey}).`,

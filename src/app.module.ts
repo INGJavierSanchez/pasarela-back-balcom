@@ -45,6 +45,10 @@ import { PaymentLogsModule } from './payment-logs/payment-logs.module';
           then: Joi.string().default('events_secret_test'),
           otherwise: Joi.string().required(),
         }),
+        WOMPI_INTEGRITY_SECRET: Joi.string().optional(),
+        WOMPI_PRIVATE_KEY_MAG: Joi.string().optional(),
+        WOMPI_EVENTS_SECRET_MAG: Joi.string().optional(),
+        WOMPI_INTEGRITY_SECRET_MAG: Joi.string().optional(),
         PAYMENTS_REDIRECT_URL: Joi.when('NODE_ENV', {
           is: 'test',
           then: Joi.string().default('https://example.com/redirect'),

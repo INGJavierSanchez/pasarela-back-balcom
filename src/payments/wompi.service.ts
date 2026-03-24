@@ -134,7 +134,7 @@ export class WompiService {
         if (computedFromData === payload.signature.checksum) {
           if (candidate.key !== configKey) {
             this.logger.warn(
-              `Firma validada con secreto alterno (${candidate.key}) en lugar de ${configKey}.`,
+              `Firma validada con secreto alterno (${candidate.key}/${candidate.kind}) en lugar de ${configKey}.`,
             );
           }
           return candidate.key;
@@ -144,7 +144,7 @@ export class WompiService {
         if (computedFromRoot === payload.signature.checksum) {
           if (candidate.key !== configKey) {
             this.logger.warn(
-              `Firma validada con secreto alterno (${candidate.key}) en lugar de ${configKey}.`,
+              `Firma validada con secreto alterno (${candidate.key}/${candidate.kind}) en lugar de ${configKey}.`,
             );
           }
           this.logger.warn(
@@ -155,7 +155,7 @@ export class WompiService {
       }
 
       this.logger.error(
-        `Checksum inválido. Recibido: ${payload.signature.checksum}. Config esperada: ${configKey}`,
+        `Checksum inválido. tx=${payload?.data?.transaction?.id ?? 'N/A'}, paymentLink=${payload?.data?.transaction?.payment_link_id ?? 'N/A'}, legalId=${payload?.data?.transaction?.customer_data?.legal_id ?? payload?.data?.transaction?.customer_data?.legalId ?? 'N/A'}, checksumRecibido=${payload.signature.checksum}, configEsperada=${configKey}`,
       );
       throw new UnauthorizedException('Invalid Wompi payload checksum');
 
@@ -181,14 +181,16 @@ export class WompiService {
       if (computedLegacy === parsed.signature) {
         if (candidate.key !== configKey) {
           this.logger.warn(
-            `Firma Legacy validada con secreto alterno (${candidate.key}) en lugar de ${configKey}.`,
+            `Firma Legacy validada con secreto alterno (${candidate.key}/${candidate.kind}) en lugar de ${configKey}.`,
           );
         }
         return candidate.key;
       }
     }
 
-    this.logger.error(`Firma Legacy inválida. Config esperada: ${configKey}`);
+    this.logger.error(
+      `Firma Legacy inválida. tx=${payload?.data?.transaction?.id ?? 'N/A'}, paymentLink=${payload?.data?.transaction?.payment_link_id ?? 'N/A'}, configEsperada=${configKey}`,
+    );
     throw new UnauthorizedException('Invalid Wompi legacy signature');
   }
 
@@ -216,18 +218,36 @@ export class WompiService {
 
   private getSecretCandidates(
     preferred: 'DEFAULT' | 'MAG',
-  ): Array<{ key: 'DEFAULT' | 'MAG'; secret: string }> {
-    const preferredSecret = this.configService.get<string>(
-      `WOMPI_EVENTS_SECRET${preferred === 'MAG' ? '_MAG' : ''}`,
-    )?.trim();
-    const fallbackKey: 'DEFAULT' | 'MAG' = preferred === 'MAG' ? 'DEFAULT' : 'MAG';
-    const fallbackSecret = this.configService.get<string>(
-      `WOMPI_EVENTS_SECRET${fallbackKey === 'MAG' ? '_MAG' : ''}`,
-    )?.trim();
+  ): Array<{ key: 'DEFAULT' | 'MAG'; kind: 'events' | 'integrity'; secret: string }> {
+    const preferredSuffix = preferred === 'MAG' ? '_MAG' : '';
+    const preferredEvents = this.configService
+      .get<string>(`WOMPI_EVENTS_SECRET${preferredSuffix}`)
+      ?.trim();
+    const preferredIntegrity = this.configService
+      .get<string>(`WOMPI_INTEGRITY_SECRET${preferredSuffix}`)
+      ?.trim();
 
-    const candidates: Array<{ key: 'DEFAULT' | 'MAG'; secret: string }> = [];
-    if (preferredSecret) candidates.push({ key: preferred, secret: preferredSecret });
-    if (fallbackSecret) candidates.push({ key: fallbackKey, secret: fallbackSecret });
+    const fallbackKey: 'DEFAULT' | 'MAG' = preferred === 'MAG' ? 'DEFAULT' : 'MAG';
+    const fallbackSuffix = fallbackKey === 'MAG' ? '_MAG' : '';
+    const fallbackEvents = this.configService
+      .get<string>(`WOMPI_EVENTS_SECRET${fallbackSuffix}`)
+      ?.trim();
+    const fallbackIntegrity = this.configService
+      .get<string>(`WOMPI_INTEGRITY_SECRET${fallbackSuffix}`)
+      ?.trim();
+
+    const candidates: Array<{ key: 'DEFAULT' | 'MAG'; kind: 'events' | 'integrity'; secret: string }> = [];
+    if (preferredEvents) candidates.push({ key: preferred, kind: 'events', secret: preferredEvents });
+    if (preferredIntegrity) candidates.push({ key: preferred, kind: 'integrity', secret: preferredIntegrity });
+    if (fallbackEvents) candidates.push({ key: fallbackKey, kind: 'events', secret: fallbackEvents });
+    if (fallbackIntegrity) candidates.push({ key: fallbackKey, kind: 'integrity', secret: fallbackIntegrity });
+
+    this.logger.debug(
+      `Secrets candidatos para ${preferred}: ${candidates
+        .map((c) => `${c.key}/${c.kind}`)
+        .join(', ') || 'ninguno'}`,
+    );
+
     return candidates;
   }
 
