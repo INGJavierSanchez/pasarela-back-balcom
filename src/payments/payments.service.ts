@@ -36,6 +36,7 @@ export class PaymentsService {
     let customerEmail: string | undefined = dto.customerEmail;
     let customerPhone: string | undefined;
     let routerName = '';
+    let suggestedInvoiceId: string | undefined;
 
     try {
       // Usar el WebService (Scraping) que funciona para buscar al cliente
@@ -51,6 +52,9 @@ export class PaymentsService {
         if (result.customerEmail) customerEmail = result.customerEmail;
         if (result.customerPhone) customerPhone = result.customerPhone;
         routerName = (result.router || '').trim().toUpperCase();
+        if (Array.isArray(result.pending) && result.pending.length > 0) {
+          suggestedInvoiceId = String(result.pending[0].id ?? '');
+        }
       }
     } catch (e) {
       this.logger.warn(`No se pudo obtener datos del cliente ${dto.customerId} via WispHub Web Service: ${e.message}`);
@@ -84,6 +88,7 @@ export class PaymentsService {
       },
       metadata: {
         customerId: dto.customerId,
+        invoiceId: suggestedInvoiceId,
         wompiConfig: configKey,
       },
     };
@@ -114,9 +119,42 @@ export class PaymentsService {
       return;
     }
 
-    // Extraer metadata para saber qué configuración se usó
-    const metadata =
+    const txMetadata =
       transaction.payment_link?.data?.metadata ?? transaction.metadata ?? {};
+
+    let linkData: any = null;
+    let linkMetadata: Record<string, any> = {};
+    if (transaction.payment_link_id) {
+      try {
+        // Primer intento: metadata declarada en el webhook (si existe)
+        const preConfig = (txMetadata?.wompiConfig || 'DEFAULT') as 'DEFAULT' | 'MAG';
+        linkData = await this.wompiService.getPaymentLink(
+          transaction.payment_link_id,
+          preConfig,
+        );
+
+        // Si no retorna, reintentar con config alterna
+        if (!linkData) {
+          const altConfig = preConfig === 'MAG' ? 'DEFAULT' : 'MAG';
+          linkData = await this.wompiService.getPaymentLink(
+            transaction.payment_link_id,
+            altConfig,
+          );
+        }
+
+        linkMetadata = (linkData?.metadata ?? {}) as Record<string, any>;
+      } catch (e) {
+        this.logger.warn(
+          `No se pudo cargar metadata del payment link ${transaction.payment_link_id}: ${e.message}`,
+        );
+      }
+    }
+
+    const metadata = {
+      ...txMetadata,
+      ...linkMetadata,
+    };
+
     const declaredConfigKey = metadata.wompiConfig || 'DEFAULT';
     this.logger.debug(
       `Webhook recibido: tx=${transaction?.id ?? 'N/A'}, configDeclarada=${declaredConfigKey}`,
@@ -151,29 +189,26 @@ export class PaymentsService {
       return;
     }
 
-    // El metadata ya fue extraído arriba para la firma
-    let customerId = 
-      metadata.customerId || 
-      metadata.customer_id || 
-      transaction.customer_data?.legal_id || 
-      transaction.customer_data?.legalId;
+    // Prioridad de identificación: metadata del link > metadata transacción > legal_id digitado
+    let customerId =
+      metadata.customerId ||
+      metadata.customer_id ||
+      linkData?.customer_data?.legal_id ||
+      linkData?.customer_data?.legalId ||
+      transaction.customer_data?.legal_id ||
+      transaction.customer_data?.legalId ||
+      transaction.customer_email;
 
-    if (!customerId && transaction.payment_link_id) {
-      this.logger.debug(`Buscando customerId en el Payment Link original: ${transaction.payment_link_id}`);
-      try {
-        const linkData = await this.wompiService.getPaymentLink(
-          transaction.payment_link_id,
-          validatedConfigKey as 'DEFAULT' | 'MAG'
-        );
-        customerId = 
-          linkData?.metadata?.customerId || 
-          linkData?.metadata?.customer_id || 
-          linkData?.customer_data?.legal_id ||
-          linkData?.customer_data?.legalId ||
-          transaction.customer_email; // Último recurso
-      } catch (e) {
-        this.logger.warn(`Error buscando payment link original: ${e.message}`);
-      }
+    const customerIdFromBuyer =
+      transaction.customer_data?.legal_id || transaction.customer_data?.legalId;
+    if (
+      customerId &&
+      customerIdFromBuyer &&
+      String(customerId) !== String(customerIdFromBuyer)
+    ) {
+      this.logger.warn(
+        `El documento digitado por comprador (${customerIdFromBuyer}) no coincide con customerId del link (${customerId}). Se usa customerId del link para aplicar el pago.`,
+      );
     }
 
     if (!customerId) {
@@ -198,8 +233,27 @@ export class PaymentsService {
       this.logger.warn(`Error buscando facturas vía WebService: ${e.message}`);
     }
 
-    const targetInvoice =
+    const metaInvoiceId =
+      metadata.invoiceId ||
+      metadata.invoice_id ||
+      linkMetadata.invoiceId ||
+      linkMetadata.invoice_id;
+
+    let targetInvoice =
       pendingInvoices && pendingInvoices.length > 0 ? pendingInvoices[0] : null;
+
+    if (metaInvoiceId && Array.isArray(pendingInvoices) && pendingInvoices.length > 0) {
+      const matchByMeta = pendingInvoices.find(
+        (inv: any) => String(inv?.id ?? '') === String(metaInvoiceId),
+      );
+      if (matchByMeta) {
+        targetInvoice = matchByMeta;
+      } else {
+        this.logger.warn(
+          `La factura en metadata (${metaInvoiceId}) no aparece en pendientes de ${customerId}. Se usa la primera pendiente disponible.`,
+        );
+      }
+    }
 
     if (!targetInvoice) {
       this.logger.warn(
