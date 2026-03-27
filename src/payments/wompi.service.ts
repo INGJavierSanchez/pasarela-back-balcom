@@ -154,12 +154,16 @@ export class WompiService {
         }
       }
 
-      this.logger.error(
-        `Checksum inválido. tx=${payload?.data?.transaction?.id ?? 'N/A'}, paymentLink=${payload?.data?.transaction?.payment_link_id ?? 'N/A'}, legalId=${payload?.data?.transaction?.customer_data?.legal_id ?? payload?.data?.transaction?.customer_data?.legalId ?? 'N/A'}, checksumRecibido=${payload.signature.checksum}, configEsperada=${configKey}`,
+      this.logger.warn(
+        `Checksum no valido en primer intento. tx=${payload?.data?.transaction?.id ?? 'N/A'}, paymentLink=${payload?.data?.transaction?.payment_link_id ?? 'N/A'}, legalId=${payload?.data?.transaction?.customer_data?.legal_id ?? payload?.data?.transaction?.customer_data?.legalId ?? 'N/A'}, checksumRecibido=${payload.signature.checksum}, configEsperada=${configKey}. Se intentara validacion legacy por cabecera si existe.`,
       );
-      throw new UnauthorizedException('Invalid Wompi payload checksum');
 
-      // Validación exitosa retorna arriba
+      // Si no hay cabecera legacy, si rechazamos inmediatamente.
+      if (!signatureHeader) {
+        throw new UnauthorizedException('Invalid Wompi payload checksum');
+      }
+
+      // Si hay cabecera, continuamos y probamos validación legacy.
     }
 
     // ─── Validación Legacy: cabecera x-event-signature (HMAC SHA256) ────────

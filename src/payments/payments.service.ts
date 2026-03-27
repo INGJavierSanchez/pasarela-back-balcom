@@ -196,8 +196,19 @@ export class PaymentsService {
       linkData?.customer_data?.legal_id ||
       linkData?.customer_data?.legalId ||
       transaction.customer_data?.legal_id ||
-      transaction.customer_data?.legalId ||
-      transaction.customer_email;
+      transaction.customer_data?.legalId;
+
+    customerId = this.normalizeCustomerId(customerId);
+    const customerEmail = this.normalizeCustomerEmail(transaction.customer_email);
+
+    if (!customerId && customerEmail) {
+      customerId = await this.resolveCustomerIdFromEmail(customerEmail);
+      if (customerId) {
+        this.logger.log(
+          `CustomerId resuelto por email en webhook. email=${customerEmail}, customerId=${customerId}, tx=${transaction?.id ?? 'N/A'}`,
+        );
+      }
+    }
 
     const customerIdFromBuyer =
       transaction.customer_data?.legal_id || transaction.customer_data?.legalId;
@@ -213,7 +224,7 @@ export class PaymentsService {
 
     if (!customerId) {
       this.logger.warn(
-        `Transacción aprobada sin customerId en metadata o customer_data. Transaction: ${JSON.stringify(transaction)}`
+        `Transacción aprobada sin customerId resoluble. tx=${transaction?.id ?? 'N/A'}, email=${customerEmail ?? 'N/A'}. Se omite sincronización para evitar buscar por cédula con email.`
       );
       return;
     }
@@ -626,5 +637,69 @@ export class PaymentsService {
     await this.paymentRecordRepository.save(freshRecord);
 
     record.metadata = freshRecord.metadata;
+  }
+
+  private normalizeCustomerId(value: unknown): string | undefined {
+    const raw = String(value ?? '').trim();
+    if (!raw) return undefined;
+    if (raw.includes('@')) return undefined;
+    return raw;
+  }
+
+  private normalizeCustomerEmail(value: unknown): string | undefined {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (!raw) return undefined;
+    if (!raw.includes('@')) return undefined;
+    return raw;
+  }
+
+  private async resolveCustomerIdFromEmail(
+    email: string,
+  ): Promise<string | undefined> {
+    const searchFields = ['cliente__username'];
+
+    for (const searchField of searchFields) {
+      try {
+        const result = (await this.wisphubWebService.getFacturas(
+          this.wisphubCredentials,
+          email,
+          searchField,
+          'Exacta',
+          undefined,
+          undefined,
+          undefined,
+          'fecha_emision',
+          undefined,
+          1,
+          5,
+        )) as any;
+
+        const rows = Array.isArray(result?.data)
+          ? result.data
+          : Array.isArray(result)
+            ? result
+            : [];
+
+        const firstRow = rows[0] ?? null;
+        if (!firstRow) continue;
+
+        const rawCustomerId =
+          firstRow['cliente__perfilusuario__cedula'] ??
+          firstRow['cliente__cedula'] ??
+          firstRow['cedula'] ??
+          firstRow['documento'] ??
+          null;
+
+        const normalized = this.normalizeCustomerId(rawCustomerId);
+        if (normalized) return normalized;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.warn(
+          `No se pudo resolver customerId por email (${email}) en ${searchField}: ${msg}`,
+        );
+      }
+    }
+
+    return undefined;
   }
 }
